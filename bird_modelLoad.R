@@ -126,9 +126,9 @@ Init <- function(sim) {
     folder_id <- googledrive::as_id(modelFolderURL)
     files <- googledrive::drive_ls(folder_id, recursive = TRUE)
     model_files <- files[grepl(bcr_pattern, files$name), ]
-    
+   
     if (nrow(model_files) == 0) stop("No model files found for BCR: ", bcr_code)
-    model_files <- head(model_files, 2)  # Test run: only first two models, can comment this out for full folder/file download
+    model_files <- head(arrange(model_files, name), 6)  # Test run: only first two models, can comment this out for full folder/file download
     
     downloaded <- character(0)
     for (i in seq_len(nrow(model_files))) {
@@ -148,7 +148,7 @@ Init <- function(sim) {
   }
   
   # Call the function
-  browser()
+  
   sim$modelFiles <- downloadBCRModels(
     studyArea = sim$studyArea,
     modelFolderURL = sim$modelfolderURL,
@@ -201,7 +201,7 @@ Event2 <- function(sim) {
   message(currentModule(sim), ": using dataPath '", dPath, "'.")
   
   if (!suppliedElsewhere("modelfolderURL", sim)) {
-    sim$modelfolderURL <- "https://drive.google.com/drive/folders/1_zG0HQGcPlpV0pq2Q9MZgB-R4U4DeP7U"
+    sim$modelfolderURL <- "https://drive.google.com/drive/u/0/folders/1o8VCG5TQpPdI-j4BjDqWGFIhkMwgDoir"
   }
   
   return(invisible(sim))
