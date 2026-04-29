@@ -1,3 +1,4 @@
+
 ## Everything in this file and any files in the R directory are sourced during `simInit()`;
 ## all functions and objects are put into the `simList`.
 ## To use objects, use `sim$xxx` (they are globally available to all modules).
@@ -15,7 +16,7 @@ defineModule(sim, list(
   timeunit = "year",
   citation = list("citation.bib"),
   documentation = list("NEWS.md", "README.md", "bird_modelLoad.Rmd"),
-  reqdPkgs = list("SpaDES.core (>= 2.1.5.9003)", "ggplot2"),
+  reqdPkgs = list("SpaDES.core (>= 2.1.5.9003)", "ggplot2", "sf", "terra"),
   parameters = bindrows(
     #defineParameter("paramName", "paramClass", value, min, max, "parameter description"),
     defineParameter(".plots", "character", "screen", NA, NA,
@@ -36,11 +37,14 @@ defineModule(sim, list(
                     "Named list of seeds to use for each event (names)."),
     defineParameter(".useCache", "logical", FALSE, NA, NA,
                     "Should caching of events or module be used?"),
-    defineParameter("modelfolderURL", "character", NA, NA, NA, "Google Drive folder URL where model files are stored")
+    defineParameter("modelfolderURL", "character", NA, NA, NA, "Google Drive folder URL where model files are stored"),
+    defineParameter("testModelLimit", "numeric", NA, NA, NA,
+                    "Optional limit of number of species models per BCR to download for testing")
   ),
   inputObjects = bindrows(
     expectsInput("studyArea", "SpatVector", "Study area polygon with BCR code passed from Bird_dataPrep module"),
-    expectsInput("modelfolderURL", "character", "Google Drive folder URL for species model files")
+    expectsInput("modelfolderURL", "character", "Google Drive folder URL for species model files"),
+    expectsInput("BCRdata", "SpatVector","Bird Conservation Region boundaries"),
   ),
   outputObjects = bindrows(
     #createsOutput("objectName", "objectClass", "output object description", ...),
@@ -62,18 +66,18 @@ doEvent.bird_modelLoad = function(sim, eventTime, eventType) {
       sim <- scheduleEvent(sim, P(sim)$.plotInitialTime, "bird_modelLoad", "plot")
       sim <- scheduleEvent(sim, P(sim)$.saveInitialTime, "bird_modelLoad", "save")
     },
-    plot = {
-      # ! ----- EDIT BELOW ----- ! #
-      # do stuff for this event
-      
-      plotFun(sim) # example of a plotting function
-      # schedule future event(s)
-      
-      # e.g.,
-      #sim <- scheduleEvent(sim, time(sim) + P(sim)$.plotInterval, "bird_modelLoad", "plot")
-      
-      # ! ----- STOP EDITING ----- ! #
-    },
+    # plot = {
+    #   # ! ----- EDIT BELOW ----- ! #
+    #   # do stuff for this event
+    #   
+    #   plotFun(sim) # example of a plotting function
+    #   # schedule future event(s)
+    #   
+    #   # e.g.,
+    #   #sim <- scheduleEvent(sim, time(sim) + P(sim)$.plotInterval, "bird_modelLoad", "plot")
+    #   
+    #   # ! ----- STOP EDITING ----- ! #
+    # },
     save = {
       # ! ----- EDIT BELOW ----- ! #
       # do stuff for this event
@@ -115,20 +119,53 @@ doEvent.bird_modelLoad = function(sim, eventTime, eventType) {
 ### template initialization
 Init <- function(sim) {
   # # ! ----- EDIT BELOW ----- ! #
-  downloadBCRModels <- function(studyArea, modelFolderURL, destinationPath ) {
+  #downloadBCRModels <- function(studyArea, modelFolderURL, destinationPath ) {
+  downloadBCRModels <- function(studyArea, BCRdata, modelFolderURL, destinationPath, testModelLimit) {  
+    
     require(reproducible)
     require(googledrive)
     
-    bcr_code <- unique(studyArea$subUnit)
-    if (length(bcr_code) != 1) stop("studyArea must have a single BCR subUnit.")
-    bcr_pattern <- paste0("_can", bcr_code, "\\.Rdata$")
+    # bcr_code <- unique(studyArea$subUnit)
+    # if (length(bcr_code) != 1) stop("studyArea must have a single BCR subUnit.")
+    # bcr_pattern <- paste0("_can", bcr_code, "\\.Rdata$")
+    
+    
+    
+    
+    # Identify intersecting BCRs
+    # Identify intersecting BCRs
+    idx <- terra::relate(BCRdata, studyArea, "intersects")
+    bcr_codes <- unique(BCRdata$subUnit[idx])
+    BCR_parts <- terra::intersect(BCRdata[idx], studyArea)
+    message("Intersecting BCR(s): ", paste(bcr_codes, collapse = ", "))
+    
+    bcr_pattern <- paste0("_can(", paste(bcr_codes, collapse = "|"), ")\\.Rdata$")
+    
     
     folder_id <- googledrive::as_id(modelFolderURL)
     files <- googledrive::drive_ls(folder_id, recursive = TRUE)
     model_files <- files[grepl(bcr_pattern, files$name), ]
-   
-    if (nrow(model_files) == 0) stop("No model files found for BCR: ", bcr_code)
-    model_files <- head(arrange(model_files, name), 6)  # Test run: only first two models, can comment this out for full folder/file download
+    
+    #if (nrow(model_files) == 0) stop("No model files found for BCR: ", bcr_code)
+    
+    if (nrow(model_files) == 0)
+      stop("No model files found for BCR(s): ", paste(bcr_codes, collapse=", "))
+    #model_files <- head(arrange(model_files, name), 2)  # Test run: only first two models, can comment this out for full folder/file download, this is now handled with the 
+    ## testModelLimit parameter
+    
+    model_files <- arrange(model_files, name)
+    # Optional test mode: limit number of models per BCR
+    if (!is.na(testModelLimit)) {
+      message("Test mode active: limiting to ", testModelLimit, " models per BCR")
+      
+      model_files <- model_files |>
+        dplyr::group_by(sub(".*_can([0-9]+)\\.Rdata", "\\1", name)) |>
+        dplyr::slice_head(n = testModelLimit) |>
+        dplyr::ungroup()
+      
+    }
+    
+    
     
     downloaded <- character(0)
     for (i in seq_len(nrow(model_files))) {
@@ -144,40 +181,68 @@ Init <- function(sim) {
     }
     
     message("Downloaded ", length(downloaded), " model(s) to: ", destinationPath)
-    return(downloaded)
+    #return(downloaded)
+    return(list(
+      modelFiles = downloaded,
+      BCR_codes = bcr_codes,
+      BCR_parts = BCR_parts
+    ))
   }
   
   # Call the function
   
-  sim$modelFiles <- downloadBCRModels(
+  # sim$modelFiles <- downloadBCRModels(
+  #   studyArea = sim$studyArea,
+  #   modelFolderURL = sim$modelfolderURL,
+  #   destinationPath = file.path(inputPath(sim))#, "model/"
+  # )
+  
+  # sim$modelFiles <- downloadBCRModels(
+  #   studyArea = sim$studyArea,
+  #   BCRdata = sim$BCRdata,
+  #   modelFolderURL = sim$modelfolderURL,
+  #   destinationPath = file.path(inputPath(sim)),
+  #   testModelLimit = P(sim)$testModelLimit
+  # )
+  # 
+  # sim$BCR_codes <- bcr_codes
+  # sim$BCR_intersections <- BCR_intersections
+  #browser()
+  res <- downloadBCRModels(
     studyArea = sim$studyArea,
+    BCRdata = sim$BCRdata,
     modelFolderURL = sim$modelfolderURL,
-    destinationPath = file.path(inputPath(sim))#, "model/"
+    destinationPath = file.path(inputPath(sim)),
+    testModelLimit = P(sim)$testModelLimit
   )
+  
+  sim$modelFiles <- res$modelFiles
+  sim$BCR_codes <- res$BCR_codes
+  sim$BCR_parts <- res$BCR_parts
   # ! ----- STOP EDITING ----- ! #
   
   return(invisible(sim))
 }
 ### template for save events
-Save <- function(sim) {
-  # ! ----- EDIT BELOW ----- ! #
-  # do stuff for this event
-  sim <- saveFiles(sim)
-  
-  # ! ----- STOP EDITING ----- ! #
-  return(invisible(sim))
-}
+# Save <- function(sim) {
+#   # ! ----- EDIT BELOW ----- ! #
+#   # do stuff for this event
+#   sim <- saveFiles(sim)
+#   
+#   # ! ----- STOP EDITING ----- ! #
+#   return(invisible(sim))
+# }
 
 ### template for plot events
-plotFun <- function(sim) {
-  # ! ----- EDIT BELOW ----- ! #
-  # do stuff for this event
-  sampleData <- data.frame("TheSample" = sample(1:10, replace = TRUE))
-  Plots(sampleData, fn = ggplotFn) # needs ggplot2
-  
-  # ! ----- STOP EDITING ----- ! #
-  return(invisible(sim))
-}
+# plotFun <- function(sim) {
+#   # ! ----- EDIT BELOW ----- ! #
+#   # do stuff for this event
+#   sampleData <- data.frame("TheSample" = sample(1:10, replace = TRUE))
+#   Plots(sampleData, fn = ggplotFn) # needs ggplot2
+#   
+#   # ! ----- STOP EDITING ----- ! #
+#   return(invisible(sim))
+# }
 
 ### template for your event1
 Event1 <- function(sim) {
@@ -203,13 +268,30 @@ Event2 <- function(sim) {
   if (!suppliedElsewhere("modelfolderURL", sim)) {
     sim$modelfolderURL <- "https://drive.google.com/drive/u/0/folders/1o8VCG5TQpPdI-j4BjDqWGFIhkMwgDoir"
   }
+  ## also for BCR data
+  if (!suppliedElsewhere("BCRdata", sim)) {
+    message(currentModule(sim), ": BCRdata not supplied, downloading...")
+    sim$BCRdata <- reproducible::prepInputs(
+      #url = "https://drive.google.com/drive/folders/108j7UNteBM63gyYqEjRbL4jSsF1UwBiB", ## this is un buffered
+      url = "https://drive.google.com/drive/folders/1KP-kWtI51yT-oELBLApf9vYLtncpO8mp", ## this is buffered
+      destinationPath = dataPath(sim),
+      fun = "terra::vect"
+    )
+  }
   
+  # Ensure CRS matches studyArea
+  if (!terra::same.crs(sim$BCRdata, sim$studyArea)) {
+    message(currentModule(sim), ": reprojecting BCRdata to match studyArea CRS")
+    sim$BCRdata <- terra::project(sim$BCRdata, terra::crs(sim$studyArea))
+    
+  }
   return(invisible(sim))
 }
 
+# 
+# ggplotFn <- function(data, ...) {
+#   ggplot2::ggplot(data, ggplot2::aes(TheSample)) +
+#     ggplot2::geom_histogram(...)
+# }
 
-ggplotFn <- function(data, ...) {
-  ggplot2::ggplot(data, ggplot2::aes(TheSample)) +
-    ggplot2::geom_histogram(...)
-}
 
