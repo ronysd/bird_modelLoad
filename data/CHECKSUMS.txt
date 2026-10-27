@@ -1,0 +1,5 @@
+"file" "checksum" "filesize" "algorithm"
+"BAM_BCR_NationalModel_Buffered.dbf" "510b1d45c7dcb87e" "3563" "xxhash64"
+"BAM_BCR_NationalModel_Buffered.prj" "376beab7a2b02405" "464" "xxhash64"
+"BAM_BCR_NationalModel_Buffered.shp" "d89ce5f0e6a5faf9" "57220856" "xxhash64"
+"BAM_BCR_NationalModel_Buffered.shx" "f83d7eaa2c1e5717" "364" "xxhash64"
