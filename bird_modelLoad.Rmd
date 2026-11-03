@@ -45,20 +45,40 @@ download.file(url = "https://img.shields.io/badge/Made%20with-Markdown-1f425f.pn
 
 ### Module summary
 
-Provide a brief summary of what the module does / how to use the module.
-
-Module documentation should be written so that others can use your module.
-This is a template for module documentation, and should be changed to reflect your module.
+Download bird models for BCR units intersecting the study area, optionally selecting
+species, and publish an index of the downloaded files. Model files must follow
+`SPECIES_canBCR.Rdata`, for example `GCKI_can12.Rdata`. Species codes are
+case-insensitive letters/digits starting with a letter; BCR codes are digits.
+Google Drive access uses the caller's existing googledrive authentication.
 
 ### Module inputs and parameters
 
-Describe input data required by the module and how to obtain it (e.g., directly from online sources or supplied by other modules)
-If `sourceURL` is specified, `downloadData("bird_modelLoad", "/home/sdas/bird_NRV/modules")` may be sufficient.
+Supply a polygon `studyArea` and optionally `BCRdata` (a polygon SpatVector with
+valid `subUnit` identifiers). Otherwise BCR boundaries are downloaded by
+`.inputObjects`. Supply `modelfolderURL` as a shared input to override the default
+Google Drive folder; the legacy parameter of the same name is not used for acquisition.
+
+Set the module's `species` parameter to select one or several species:
+
+```{r select-species}
+parameters <- list(bird_modelLoad = list(species = c("GCKI", "RCKI")))
+# Use species = "GCKI" for one species, or character(0) (default) for all species.
+```
+
+Species codes are trimmed, uppercased, and deduplicated. Every requested species
+must have a model for every intersecting BCR. Missing pairs, unparseable `.Rdata`
+names, duplicate selected species/BCR keys, or BCRs without models stop acquisition
+before any model downloads. Unrelated non-`.Rdata` files are ignored.
+
+`testModelLimit = NA` downloads all matches. A positive whole number limits models
+per BCR in filename order **after** species selection; it must be at least the
+number of explicitly selected species. Download destinations use `inputPath(sim)`;
+the existing `overwrite = TRUE` policy is retained.
 
 Table \@ref(tab:moduleInputs-bird-modelLoad) shows the full list of module inputs.
 
 ```{r moduleInputs-bird-modelLoad, echo = FALSE, eval = TRUE, message = FALSE, warning = FALSE}
-df_inputs <- SpaDES.core::moduleInputs("bird_modelLoad", "/home/sdas/bird_NRV/modules")
+df_inputs <- SpaDES.core::moduleInputs("bird_modelLoad", "..")
 knitr::kable(df_inputs,
              caption = "List of (ref:bird-modelLoad) input objects and their description.") |>
   kableExtra::kable_styling(latex_options = "scale_down", full_width = TRUE)
@@ -68,7 +88,7 @@ Summary of user-visible parameters (Table \@ref(tab:moduleParams-bird-modelLoad)
 
 
 ```{r moduleParams-bird-modelLoad, echo = FALSE, eval = TRUE, message = FALSE, warning = FALSE}
-df_params <- SpaDES.core::moduleParams("bird_modelLoad", "/home/sdas/bird_NRV/modules")
+df_params <- SpaDES.core::moduleParams("bird_modelLoad", "..")
 knitr::kable(df_params, caption = "List of (ref:bird-modelLoad) parameters and their description.") |>
   kableExtra::kable_styling(latex_options = "scale_down", full_width = TRUE)
 ```
@@ -87,17 +107,39 @@ Write what is saved.
 
 ### Module outputs
 
-Description of the module outputs (Table \@ref(tab:moduleOutputs-bird-modelLoad)).
+`sim$modelIndex` is a data.table keyed by `species` and `BCR`, with one row per
+successfully downloaded file. Its five columns are character vectors:
+
+| Column | Meaning |
+|---|---|
+| `species` | Uppercase species code, e.g. `GCKI` |
+| `BCR` | BCR subUnit identifier, without leading zeros, e.g. `"12"` |
+| `fileName` | Remote model filename |
+| `localPath` | Absolute path to the downloaded file; existence is checked |
+| `remoteId` | Google Drive file ID |
+
+```{r inspect-model-index}
+sim$modelIndex[species == "GCKI" & BCR == "12"]
+sim$modelIndex[species %in% c("GCKI", "RCKI")]
+```
+
+The existing outputs remain available: `modelFiles` is the character vector of
+local paths in index order; `BCR_codes` is a character vector of intersecting BCR
+identifiers; `BCR_parts` is a SpatVector of clipped BCR polygons, retaining original
+attributes. Failed downloads do not publish a completed index.
 
 ```{r moduleOutputs-bird-modelLoad, echo = FALSE, eval = TRUE, message = FALSE, warning = FALSE}
-df_outputs <- SpaDES.core::moduleOutputs("bird_modelLoad", "/home/sdas/bird_NRV/modules")
+df_outputs <- SpaDES.core::moduleOutputs("bird_modelLoad", "..")
 knitr::kable(df_outputs, caption = "List of (ref:bird-modelLoad) outputs and their description.") |>
   kableExtra::kable_styling(latex_options = "scale_down", full_width = TRUE)
 ```
 
 ### Links to other modules
 
-Describe any anticipated linkages to other modules, such as modules that supply input data or do post-hoc analysis.
+Study-area polygons may be supplied by bird_dataPrep. This change publishes the
+loader index only: bird_modelPredict still scans its configured model folder
+and does not yet consume `modelIndex` (workplan ML-H3). Species filtering here
+does not remove previously downloaded models from a shared folder.
 
 ### Getting help
 
