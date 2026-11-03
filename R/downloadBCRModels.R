@@ -7,6 +7,9 @@
 #' @param testModelLimit Positive whole-number limit per BCR, or NA for no limit.
 #' @param species Species codes; character(0) selects all available species.
 #'
+#' Invalid BCR features are repaired locally with terra::makeValid(), with a
+#' warning and validation of the result. studyArea is never repaired.
+#'
 #' @return List containing modelIndex (a keyed data.table with species, BCR,
 #'   fileName, localPath and remoteId), modelFiles, BCR_codes and BCR_parts.
 #' @keywords internal
@@ -34,14 +37,46 @@ downloadBCRModels <- function(studyArea, BCRdata, modelFolderURL, destinationPat
       terra::geomtype(BCRdata) != "polygons") {
     stop("studyArea and BCRdata must be nonempty polygon SpatVectors.")
   }
-  if (!all(terra::is.valid(studyArea)) || !all(terra::is.valid(BCRdata))) {
-    stop("studyArea and BCRdata must have valid geometries.")
+  study_validity <- terra::is.valid(studyArea, messages = TRUE)
+  invalid_study <- which(is.na(study_validity$valid) | !study_validity$valid)
+  if (length(invalid_study)) {
+    stop("studyArea has invalid geometries: ",
+         paste(paste0("feature ", invalid_study, ": ",
+                      study_validity$reason[invalid_study]), collapse = "; "),
+         ". Repair studyArea explicitly before running the loader.")
   }
   if (!nzchar(terra::crs(studyArea)) || !nzchar(terra::crs(BCRdata))) {
     stop("studyArea and BCRdata must have defined coordinate reference systems.")
   }
   if (!terra::same.crs(BCRdata, studyArea)) {
     BCRdata <- terra::project(BCRdata, terra::crs(studyArea))
+  }
+  bcr_validity <- terra::is.valid(BCRdata, messages = TRUE)
+  invalid_bcr <- which(is.na(bcr_validity$valid) | !bcr_validity$valid)
+  if (length(invalid_bcr)) {
+    details <- paste(paste0("feature ", invalid_bcr, ": ",
+                            bcr_validity$reason[invalid_bcr]), collapse = "; ")
+    warning("Repairing invalid BCRdata geometries with terra::makeValid(): ",
+            details, ". Polygon boundaries may change; original BCRdata is not modified.")
+    invalid_features <- BCRdata[invalid_bcr, ]
+    repaired <- terra::makeValid(terra::deepcopy(invalid_features))
+    if (terra::geomtype(repaired) != "polygons" ||
+        nrow(repaired) != length(invalid_bcr) ||
+        !identical(as.data.frame(repaired), as.data.frame(invalid_features))) {
+      stop("BCR geometry repair did not preserve polygon feature count and attributes.")
+    }
+    repaired_validity <- terra::is.valid(repaired)
+    if (anyNA(repaired_validity) || !all(repaired_validity) ||
+        any(!is.finite(terra::expanse(repaired)) | terra::expanse(repaired) <= 0)) {
+      stop("BCR geometry repair did not produce valid, nonempty polygon geometries.")
+    }
+    valid_bcr <- setdiff(seq_len(nrow(BCRdata)), invalid_bcr)
+    if (length(valid_bcr)) {
+      BCRdata <- rbind(BCRdata[valid_bcr, ], repaired)
+      BCRdata <- BCRdata[order(c(valid_bcr, invalid_bcr)), ]
+    } else {
+      BCRdata <- repaired
+    }
   }
   codes <- as.character(BCRdata$subUnit)
   if (length(codes) != nrow(BCRdata) || anyNA(codes) ||
@@ -61,9 +96,9 @@ downloadBCRModels <- function(studyArea, BCRdata, modelFolderURL, destinationPat
   bcr_codes <- unique(codes[idx])
   message("Intersecting BCR(s): ", paste(bcr_codes, collapse = ", "))
 
-  files <- googledrive::drive_ls(googledrive::as_id(modelFolderURL), recursive = TRUE)
+  files <- listBirdModelFiles(modelFolderURL)
   pattern <- "^([A-Za-z][A-Za-z0-9]*)_can([0-9]+)\\.Rdata$"
-  model_rows <- which(grepl("\\.Rdata$", files$name))
+  model_rows <- which(grepl("_can.*\\.Rdata$", files$name))
   invalid <- files$name[model_rows][!grepl(pattern, files$name[model_rows])]
   if (length(invalid)) {
     stop("Unparseable model file names; expected SPECIES_canBCR.Rdata: ",
@@ -90,6 +125,7 @@ downloadBCRModels <- function(studyArea, BCRdata, modelFolderURL, destinationPat
                  collapse = ", "))
     }
   }
+
   missing_bcr <- setdiff(bcr_codes, modelIndex$BCR)
   if (length(missing_bcr)) {
     stop("No model files found for BCR(s): ", paste(missing_bcr, collapse = ", "))
@@ -134,4 +170,35 @@ downloadBCRModels <- function(studyArea, BCRdata, modelFolderURL, destinationPat
     BCR_codes = bcr_codes,
     BCR_parts = BCR_parts
   )
+}
+
+#' List model-folder contents by visiting each nested folder
+#'
+#' @param modelFolderURL Google Drive root folder URL.
+#' @return A data.table of names and remote IDs discovered under the root.
+#' @keywords internal
+listBirdModelFiles <- function(modelFolderURL) {
+  pending <- as.character(googledrive::as_id(modelFolderURL))
+  visited <- character(0)
+  listings <- list()
+  while (length(pending)) {
+    folder_id <- pending[1L]
+    pending <- pending[-1L]
+    if (folder_id %in% visited) {
+      next
+    }
+    visited <- c(visited, folder_id)
+    entries <- googledrive::drive_ls(googledrive::as_id(folder_id), recursive = FALSE)
+    listings[[length(listings) + 1L]] <- data.table::data.table(
+      name = entries$name, id = as.character(entries$id)
+    )
+    for (i in seq_len(nrow(entries))) {
+      if (identical(entries$drive_resource[[i]]$mimeType,
+                    "application/vnd.google-apps.folder")) {
+        pending <- unique(c(pending, setdiff(as.character(entries$id[i]), visited)))
+      }
+    }
+  }
+  files <- data.table::rbindlist(listings)
+  unique(files, by = "id")
 }

@@ -11,7 +11,7 @@ defineModule(sim, list(
   keywords = c("birds", "models", "BCR"),
   authors = structure(list(list(given = c("Sourav", ""), family = "Das", role = c("aut", "cre"), email = "souravdron@gmail.com", comment = NULL)), class = "person"),
   childModules = character(0),
-  version = list(bird_modelLoad = "0.0.2"),
+  version = list(bird_modelLoad = "0.0.6"),
   timeframe = as.POSIXlt(c(NA, NA)),
   timeunit = "year",
   citation = list("citation.bib"),

@@ -50,6 +50,10 @@ species, and publish an index of the downloaded files. Model files must follow
 `SPECIES_canBCR.Rdata`, for example `GCKI_can12.Rdata`. Species codes are
 case-insensitive letters/digits starting with a letter; BCR codes are digits.
 Google Drive access uses the caller's existing googledrive authentication.
+The loader explicitly visits the root folder and each nested species folder,
+tracking folder IDs to avoid repeat visits. It does not rely on a single combined
+recursive listing. Folder-listing errors stop acquisition before downloading;
+Drive shortcuts are not followed.
 
 ### Module inputs and parameters
 
@@ -66,14 +70,29 @@ parameters <- list(bird_modelLoad = list(species = c("GCKI", "RCKI")))
 ```
 
 Species codes are trimmed, uppercased, and deduplicated. Every requested species
-must have a model for every intersecting BCR. Missing pairs, unparseable `.Rdata`
+must have a Canadian model for every intersecting BCR. Only filenames containing
+`_can` and ending in `.Rdata` are candidates for validation. US models
+(`SPECIES_usaBCR.Rdata`) and other unrelated files are ignored, as in the original
+Canadian-only loader. Missing pairs, unparseable Canadian model
 names, duplicate selected species/BCR keys, or BCRs without models stop acquisition
-before any model downloads. Unrelated non-`.Rdata` files are ignored.
+before any model downloads.
 
 `testModelLimit = NA` downloads all matches. A positive whole number limits models
 per BCR in filename order **after** species selection; it must be at least the
 number of explicitly selected species. Download destinations use `inputPath(sim)`;
 the existing `overwrite = TRUE` policy is retained.
+
+Geometry validation runs before model acquisition, with BCR validity checked
+after any reprojection. Invalid inputs report feature numbers and reasons.
+Invalid BCR geometry is repaired automatically; no repair parameter is needed.
+
+Repair emits a warning because polygon boundaries may change. It applies
+`terra::makeValid()` to invalid BCR features on a local copy, checks validity,
+nonempty polygon area, feature count and attributes, and uses the repaired
+geometry for intersections and `BCR_parts`. The original shared `BCRdata` is
+not modified. Invalid `studyArea` geometry is never repaired automatically.
+If repair cannot preserve valid nonempty polygons, feature count, and attributes,
+the loader stops before downloading models.
 
 Table \@ref(tab:moduleInputs-bird-modelLoad) shows the full list of module inputs.
 
